@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>handle // availability scanner</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div class="eyebrow">live scan</div>
+      <h1>Is your name<br><span>already taken?</span></h1>
+      <p class="sub">Enter a full name. We generate likely handles and check each one across GitHub, npm, and eight social platforms in real time.</p>
+
+      <div class="console">
+        <div class="console-bar"><span></span><span></span><span></span></div>
+        <div class="input-row">
+          <span class="prompt-glyph">&gt;</span>
+          <input type="text" id="nameInput" placeholder="e.g. Adifagbade Samuel Tomiwa" autocomplete="off" />
+          <button id="scanBtn">Scan</button>
+        </div>
+        <div class="status-line" id="statusLine">awaiting input</div>
+      </div>
+
+      <div class="legend">
+        <span><span class="dot is-available"></span>available</span>
+        <span><span class="dot is-taken"></span>taken</span>
+        <span><span class="dot is-checking"></span>checking</span>
+        <span><span class="dot is-unknown"></span>unknown</span>
+      </div>
+    </header>
+
+    <div id="results"><div class="empty-state">no scan run yet</div></div>
+
+    <footer>
+      API base: <code id="apiBaseDisplay"></code> — change it by editing <code>API_BASE</code> at the top of the script in this file.
+      "Unknown" means the platform blocked or timed out the check — verify manually before relying on it.
+    </footer>
+  </div>
+
+<script>
+  // If you host the frontend separately from the API, point this at your
+  // server's URL, e.g. 'https://your-api.example.com'. Leave empty to call
+  // the same origin this page is served from.
+  const API_BASE = '';
+
+  const nameInput = document.getElementById('nameInput');
+  const scanBtn = document.getElementById('scanBtn');
+  const statusLine = document.getElementById('statusLine');
+  const results = document.getElementById('results');
+  document.getElementById('apiBaseDisplay').textContent = API_BASE || window.location.origin;
+
+  const PLATFORM_ORDER = ['GitHub', 'npm', 'Reddit', 'Twitch', 'Instagram', 'X (Twitter)', 'TikTok', 'YouTube', 'Pinterest', 'Telegram', 'Medium', 'Dev.to'];
+
+  function chipHTML(username, platform, status, url) {
+    const safeUrl = url || '#';
+    return `<a class="chip ${status}" href="${safeUrl}" target="_blank" rel="noopener noreferrer" data-platform="${platform}">
+      <span class="platform">${platform}</span>
+      <span class="status-dot"></span>
+    </a>`;
+  }
+
+  function candidateCardHTML(username) {
+    const chips = PLATFORM_ORDER.map(p => chipHTML(username, p, 'checking')).join('');
+    return `
+      <div class="candidate-card" data-username="${username}">
+        <div class="candidate-head">
+          <span class="candidate-name">${username}</span>
+          <span class="candidate-tally" data-tally>checking ${PLATFORM_ORDER.length} platforms...</span>
+        </div>
+        <div class="chip-grid" data-chipgrid>${chips}</div>
+      </div>
+    `;
+  }
+
+  function updateChip(card, platform, status, url) {
+    const chip = card.querySelector(`.chip[data-platform="${CSS.escape(platform)}"]`);
+    if (!chip) return;
+    chip.className = `chip ${status}`;
+    if (url) chip.href = url;
+  }
+
+  function updateTally(card) {
+    const chips = [...card.querySelectorAll('.chip')];
+    const available = chips.filter(c => c.classList.contains('available')).length;
+    const stillChecking = chips.filter(c => c.classList.contains('checking')).length;
+    const tally = card.querySelector('[data-tally]');
+    if (stillChecking > 0) {
+      tally.textContent = `checking... (${chips.length - stillChecking}/${chips.length})`;
+    } else {
+      tally.textContent = `${available} of ${chips.length} available`;
+    }
+  }
+
+  async function runScan() {
+    const fullName = nameInput.value.trim();
+    if (!fullName) {
+      statusLine.textContent = 'enter a name first';
+      return;
+    }
+
+    scanBtn.disabled = true;
+    statusLine.textContent = 'generating candidates...';
+    results.innerHTML = '';
+
+    let candidates;
+    try {
+      const genRes = await fetch(`${API_BASE}/generate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fullName })
+      });
+      if (!genRes.ok) throw new Error(`generate failed (${genRes.status})`);
+      const data = await genRes.json();
+      candidates = data.candidates;
+    } catch (err) {
+      results.innerHTML = `<div class="error-state">Could not reach the API (${err.message}). Is the server running?</div>`;
+      statusLine.textContent = 'error';
+      scanBtn.disabled = false;
+      return;
+    }
+
+    if (!candidates || candidates.length === 0) {
+      results.innerHTML = '<div class="empty-state">no candidates generated</div>';
+      statusLine.textContent = 'nothing to scan';
+      scanBtn.disabled = false;
+      return;
+    }
+
+    results.innerHTML = candidates.map(candidateCardHTML).join('');
+    statusLine.textContent = `scanning ${candidates.length} candidates x ${PLATFORM_ORDER.length} platforms...`;
+
+    const cards = candidates.map(u => results.querySelector(`[data-username="${CSS.escape(u)}"]`));
+
+    let completed = 0;
+    const total = candidates.length;
+
+    await Promise.all(candidates.map(async (username, i) => {
+      const card = cards[i];
+      try {
+        const res = await fetch(`${API_BASE}/check-one?username=${encodeURIComponent(username)}`);
+        const data = await res.json();
+        for (const check of data.checks) {
+          updateChip(card, check.platform, check.status, check.url);
+        }
+      } catch (err) {
+        // leave chips as "checking" -> visually stalls; mark as unknown instead
+        card.querySelectorAll('.chip.checking').forEach(c => c.classList.replace('checking', 'unknown'));
+      }
+      updateTally(card);
+      completed++;
+      statusLine.textContent = `scanning... (${completed}/${total} candidates fully resolved)`;
+    }));
+
+    statusLine.textContent = `done — ${total} candidates checked across ${PLATFORM_ORDER.length} platforms`;
+    scanBtn.disabled = false;
+  }
+
+  scanBtn.addEventListener('click', runScan);
+  nameInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') runScan(); });
+</script>
+</body>
+</html>

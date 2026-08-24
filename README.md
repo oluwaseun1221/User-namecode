@@ -22,6 +22,24 @@ Prints every generated candidate with a per-platform status:
 - ❌ taken
 - ❔ unknown (platform blocked the check or timed out — verify manually)
 
+### Frontend
+
+A ready-made UI lives in `public/index.html` and is served automatically:
+
+```bash
+node server.js
+```
+
+Open `http://localhost:3000` — type a full name, hit Scan, and watch each
+candidate's platform chips resolve live (available/taken/checking/unknown).
+
+If you'd rather host the frontend separately from the API (e.g. deploy
+`index.html` to Vercel/Netlify and the API elsewhere), open
+`public/index.html`, set `API_BASE` near the top of the `<script>` block to
+your API's URL, and serve the file from wherever you like. CORS is already
+enabled on the server (`cors()` middleware in `server.js`) so cross-origin
+requests will work — tighten the allowed origins before going to production.
+
 ### API
 
 ```bash
@@ -35,6 +53,14 @@ curl -X POST http://localhost:3000/check \
   -H "Content-Type: application/json" \
   -d '{"fullName": "Adifagbade Samuel Tomiwa"}'
 ```
+
+There are three endpoints:
+- `POST /generate` — `{ fullName }` → just the candidate list, no network calls (instant).
+- `GET /check-one?username=x` — checks one username across all platforms.
+- `POST /check` — does both at once: `{ fullName }` → every candidate, fully checked.
+
+The bundled frontend calls `/generate` then fires `/check-one` per candidate in
+parallel, so results appear progressively instead of one long wait.
 
 Response shape:
 
